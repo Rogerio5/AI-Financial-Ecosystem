@@ -4,4 +4,4 @@
 *.pyc
 *.sqlite3
 .DS_Store
-data/*.json
+data/*.csv

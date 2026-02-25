@@ -8,13 +8,11 @@ app = typer.Typer()
 
 @app.command()
 def init_db():
-    """Cria schema no banco (se ainda não existir)"""
     Base.metadata.create_all(bind=engine)
     typer.echo("Schema criado.")
 
 @app.command()
 def seed():
-    """Aplica seed no banco (scripts/seed_db.py)"""
     import scripts.seed_db as s
     s.run_seed()
 
