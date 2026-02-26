@@ -1,7 +1,12 @@
 ﻿import os
+import sys
 from logging.config import fileConfig
+
 from sqlalchemy import engine_from_config, pool
 from alembic import context
+
+# garantir que o pacote do projeto seja importável
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # Alembic Config object
 config = context.config
@@ -15,18 +20,24 @@ database_url = os.getenv("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
-# Importar Base diretamente do seu projeto
-from bankpy.db import Base
-target_metadata = Base.metadata
+# Importar target metadata do seu projeto
+# Ajuste o import abaixo conforme a estrutura do seu projeto
+try:
+    from bankpy.db import Base  # exemplo: banco de dados em bankpy/db.py
+    target_metadata = Base.metadata
+except Exception:
+    target_metadata = None
 
 def run_migrations_offline():
-    """Executa migrations em modo offline."""
+    """Executa migrations em modo offline (gera SQL sem conexão)."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
-        literal_binds=True
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
     )
+
     with context.begin_transaction():
         context.run_migrations()
 
@@ -37,11 +48,15 @@ def run_migrations_online():
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
-            target_metadata=target_metadata
+            target_metadata=target_metadata,
+            compare_type=True,        # ajuda autogenerate a detectar mudanças de tipo
+            compare_server_default=True,
         )
+
         with context.begin_transaction():
             context.run_migrations()
 
