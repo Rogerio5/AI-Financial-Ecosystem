@@ -1,0 +1,62 @@
+# Dockerfile.airflow
+FROM apache/airflow:2.9.0
+
+USER root
+
+# Instala dependências básicas + Java 17
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config libxml2-dev libxslt1-dev libffi-dev libssl-dev \
+    curl git openjdk-17-jdk netcat-openbsd ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Configura JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Baixar e extrair Apache Spark (binário) compatível com Hadoop 3
+ENV SPARK_VERSION=3.5.0
+ENV HADOOP_VERSION=3
+RUN curl -fsSL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" -o /tmp/spark.tgz \
+  && tar -xzf /tmp/spark.tgz -C /opt \
+  && mv /opt/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} /opt/spark \
+  && rm /tmp/spark.tgz
+
+ENV SPARK_HOME=/opt/spark
+ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${PATH}"
+
+# Criar diretório de dados e dar permissão ao usuário airflow
+RUN mkdir -p /opt/airflow/data && chown -R airflow: /opt/airflow/data
+
+COPY requirements.txt /requirements.txt
+RUN chown airflow: /requirements.txt
+
+# Ajuste no PATH para garantir acesso ao binário airflow
+ENV PATH="/usr/local/bin:/home/airflow/.local/bin:${PATH}"
+
+USER airflow
+
+# Instala pip/wheel e requirements com constraints oficiais do Airflow 2.9.0
+RUN python -m pip install --upgrade pip wheel && \
+    python -m pip install --no-cache-dir -r /requirements.txt \
+      --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.0/constraints-3.12.txt"
+
+# Instala PySpark para rodar jobs Spark via APIs Python
+RUN python -m pip install pyspark==3.5.0
+
+USER root
+# Criar symlink global caso o CLI esteja em /home/airflow/.local/bin
+RUN if [ -f /home/airflow/.local/bin/airflow ]; then \
+      ln -sf /home/airflow/.local/bin/airflow /usr/local/bin/airflow; \
+    fi
+
+COPY dags/ /opt/airflow/dags
+COPY plugins/ /opt/airflow/plugins
+RUN chown -R airflow: /opt/airflow/dags /opt/airflow/plugins
+
+USER airflow
+WORKDIR /opt/airflow
+ENV PYTHONUNBUFFERED=1
+
+# ✅ Preserve o entrypoint oficial da imagem
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint"]
+CMD ["bash"]

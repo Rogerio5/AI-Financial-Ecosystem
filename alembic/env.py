@@ -1,18 +1,18 @@
-﻿import os
+import os
 import sys
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# garantir que o pacote do projeto seja importável
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Prometheus client para métricas
+from prometheus_client import Counter, Histogram
 
 # Alembic Config object
 config = context.config
 
-# Interpretar o arquivo ini para logging
-if config.config_file_name:
+# Logging
+if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Usar DATABASE_URL do ambiente se presente
@@ -21,14 +21,20 @@ if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
 # Importar target metadata do seu projeto
-# Ajuste o import abaixo conforme a estrutura do seu projeto
 try:
     from bankpy.db import Base  # exemplo: banco de dados em bankpy/db.py
     target_metadata = Base.metadata
 except Exception:
     target_metadata = None
 
-def run_migrations_offline():
+# -----------------------------
+# Métricas Prometheus
+# -----------------------------
+migrations_counter = Counter("alembic_migrations_total", "Total de migrations executadas")
+migrations_duration = Histogram("alembic_migrations_duration_seconds", "Tempo de execução das migrations em segundos")
+migrations_failures = Counter("alembic_migrations_failures_total", "Total de falhas em migrations")
+
+def run_migrations_offline() -> None:
     """Executa migrations em modo offline (gera SQL sem conexão)."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -39,12 +45,18 @@ def run_migrations_offline():
     )
 
     with context.begin_transaction():
-        context.run_migrations()
+        try:
+            with migrations_duration.time():
+                context.run_migrations()
+                migrations_counter.inc()
+        except Exception:
+            migrations_failures.inc()
+            raise
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     """Executa migrations em modo online (com conexão)."""
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
+        config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
@@ -53,12 +65,18 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True,        # ajuda autogenerate a detectar mudanças de tipo
+            compare_type=True,
             compare_server_default=True,
         )
 
         with context.begin_transaction():
-            context.run_migrations()
+            try:
+                with migrations_duration.time():
+                    context.run_migrations()
+                    migrations_counter.inc()
+            except Exception:
+                migrations_failures.inc()
+                raise
 
 if context.is_offline_mode():
     run_migrations_offline()

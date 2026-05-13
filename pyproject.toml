@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bankpy"
+version = "0.1.0"
+description = "Projeto de exemplo para banco em Python"
+authors = [
+    { name="Rogerio", email="rogerio@example.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = [
+    "psycopg2-binary",
+    "sqlalchemy",
+    "alembic"
+]
+
+[tool.setuptools.packages.find]
+include = ["bankpy*"]

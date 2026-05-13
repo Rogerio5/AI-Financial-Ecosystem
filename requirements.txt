@@ -1,7 +1,10 @@
-﻿typer[all]==0.9.0
-SQLAlchemy==2.0.20
-psycopg2-binary==2.9.7
-alembic==1.11.1
-python-dotenv==1.0.0
-pandas==2.2.3
-pytest==7.4.0
+apache-airflow-providers-postgres
+apache-airflow-providers-redis
+apache-airflow-providers-mongo
+apache-airflow-providers-apache-spark
+apache-airflow-providers-docker
+
+psycopg2-binary
+python-dotenv
+pandas
+pyspark

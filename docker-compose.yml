@@ -1,32 +1,347 @@
-﻿version: "3.8"
+
 services:
   db:
-    image: postgres:16
+    image: postgres:15
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
-      POSTGRES_DB: bankpy_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d bankpy_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    ports:
-      - "5432:5432"
+      - bankpy_postgres_data:/var/lib/postgresql/data
+      - ./data:/app/data:rw
+    networks:
+      - etl_net
 
-  app:
-    build: .
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: "postgresql://bankpy_user:Engenharia10@db:5432/bankpy_db"
+  redis:
+    image: redis:7
+    restart: unless-stopped
     volumes:
-      - .:/app
-    command: ["python", "cli.py"]
+      - bankpy_redis_data:/data
+    networks:
+      - etl_net
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: custom-airflow:2.9
+    restart: "no"
+    depends_on:
+      - db
+    env_file:
+      - .env
+    command: ["/bin/bash", "/docker-entrypoint-init-airflow.sh"]
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /home/rogerio/airflow_logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./requirements.txt:/requirements.txt:ro
+      - ./data:/opt/airflow/data
+      - ./data:/app/data
+      - ./docker/init-airflow-init.sh:/docker-entrypoint-init-airflow.sh:ro
+    networks:
+      - etl_net
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: custom-airflow:2.9
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - mongo
+    env_file:
+      - .env
+    environment:
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+      - YARN_CONF_DIR=/opt/hadoop/etc/hadoop
+    ports:
+      - "8088:8088"
+    command: webserver --port 8088
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /home/rogerio/airflow_logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+      - ./data:/app/data
+      - /home/rogerio/bankpy/hadoop_conf:/opt/hadoop/etc/hadoop
+    networks:
+      - etl_net
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: custom-airflow:2.9
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - mongo
+    env_file:
+      - .env
+    environment:
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+      - YARN_CONF_DIR=/opt/hadoop/etc/hadoop
+    command: scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /home/rogerio/airflow_logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+      - ./data:/app/data
+      - /home/rogerio/bankpy/hadoop_conf:/opt/hadoop/etc/hadoop 
+    networks:
+      - etl_net
+
+  airflow-triggerer:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: custom-airflow:2.9
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - mongo
+    env_file:
+      - .env
+    environment:
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+      - YARN_CONF_DIR=/opt/hadoop/etc/hadoop
+    command: triggerer
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /home/rogerio/airflow_logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+      - ./data:/app/data
+      - /home/rogerio/bankpy/hadoop_conf:/opt/hadoop/etc/hadoop
+    networks:
+      - etl_net
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: custom-airflow:2.9
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - mongo
+    env_file:
+      - .env
+    environment:
+      - HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop
+      - YARN_CONF_DIR=/opt/hadoop/etc/hadoop
+    command: worker
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - /home/rogerio/airflow_logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+      - ./data:/app/data
+      - /home/rogerio/bankpy/hadoop_conf:/opt/hadoop/etc/hadoop
+    networks:
+      - etl_net
+
+  superset_init:
+    build:
+      context: .
+      dockerfile: Dockerfile.superset
+    restart: "no"
+    depends_on:
+      - db
+    env_file:
+      - .env
+    command: ["/bin/bash", "-c", "superset db upgrade && superset init"]
+    volumes:
+      - ./superset_config.py:/app/superset_home/config/superset_config.py
+      - bankpy_superset_data:/app/superset_home
+    environment:
+      - SUPERSET_CONFIG_PATH=/app/superset_home/config/superset_config.py
+    networks:
+      - etl_net
+
+  superset:
+    build:
+      context: .
+      dockerfile: Dockerfile.superset
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file:
+      - .env
+    ports:
+      - "8089:8088"
+    volumes:
+      - ./superset_config.py:/app/superset_home/config/superset_config.py
+      - bankpy_superset_data:/app/superset_home
+    environment:
+      - SUPERSET_CONFIG_PATH=/app/superset_home/config/superset_config.py
+    networks:
+      - etl_net
+
+
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "5050:80"
+    volumes:
+      - bankpy_pgadmin_data:/var/lib/pgadmin
+    networks:
+      - etl_net
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - bankpy_grafana_data:/var/lib/grafana
+    networks:
+      - etl_net
+
+  bankpy-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: bankpy-api:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - etl_net
+
+  mongo:
+    image: mongo:4.4
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - bankpy_mongo_data:/data/db
+      - ./docker/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - etl_net
+
+  spark-master:
+    image: apache/spark:3.4.1
+    restart: unless-stopped
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master
+      --port 7077
+      --webui-port 8080
+    volumes:
+      - ./data:/app/data
+    networks:
+      - etl_net
+
+  spark-worker-1:
+    image: apache/spark:3.4.1
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8081
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1g
+    volumes:
+      - ./data:/app/data
+    networks:
+      - etl_net
+
+  spark-worker-2:
+    image: apache/spark:3.4.1
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8082"
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8082
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1g
+    volumes:
+      - ./data:/app/data
+    networks:
+      - etl_net
+
+  spark-worker-3:
+    image: apache/spark:3.4.1
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+    ports:
+      - "8083:8083"
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8083
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 1g
+    volumes:
+      - ./data:/app/data
+    networks:
+      - etl_net
+
+  streamlit:   # <-- coloque aqui dentro de "services"
+    image: python:3.11-slim
+    restart: unless-stopped
+    depends_on:
+      - db
+    env_file:
+      - .env
+    working_dir: /app
+    volumes:
+      - ./streamlit_app:/app
+    ports:
+      - "8501:8501"
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - etl_net
+
+networks:
+  etl_net:
+    driver: bridge
 
 volumes:
-  db_data:
+  bankpy_postgres_data:
+  bankpy_redis_data:
+  bankpy_pgadmin_data:
+  bankpy_mongo_data:
+  bankpy_grafana_data:
+  bankpy_superset_data:
+

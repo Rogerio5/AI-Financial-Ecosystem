@@ -4,3 +4,5 @@
 .venv/
 data/
 db_data/
+bankpy.egg-info/
+.dockerignore
